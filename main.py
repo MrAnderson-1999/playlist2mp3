@@ -1,73 +1,63 @@
-# This script gets a list of tracks from a given URL and
-# either downloads the tracks to a given output directory or adds
-# the tracks to a given playlist.
-
 import spotipy
+import os
 import requests
 import json
 
-# This function gets a list of tracks from a given URL.
-def get_track_list(url):
-  """Gets a list of tracks from a given URL."""
-  # Make a request to the URL.
-  response = requests.get(url)
+from spotipy.oauth2 import SpotifyOAuth
 
-  # Check if the request was successful.
-  if response.status_code == 200:
-    # The request was successful, so load the JSON data.
-    data = json.loads(response.content)
+# Spotify API credentials and scope
+SPOTIPY_CLIENT_ID = 'your_client_id'
+SPOTIPY_CLIENT_SECRET = 'your_client_secret'
+SPOTIPY_REDIRECT_URI = 'http://localhost:8080'
+SPOTIPY_SCOPE = 'playlist-modify-public'
 
-    # Create a list of tracks.
-    track_list = []
+# Initialize Spotipy client
+sp = spotipy.Spotify(auth_manager=SpotifyOAuth(client_id=SPOTIPY_CLIENT_ID,
+                                               client_secret=SPOTIPY_CLIENT_SECRET,
+                                               redirect_uri=SPOTIPY_REDIRECT_URI,
+                                               scope=SPOTIPY_SCOPE))
 
-    # Iterate over the tracks in the JSON data.
-    for track in data['tracks']['items']:
-      # Add the track name to the list of tracks.
-      track_list.append(track['track']['name'])
-
-    # Return the list of tracks.
+# This function gets a list of tracks from a given URL or list of track names.
+def get_track_list(input_data):
+    """Gets a list of tracks from a given URL or list of track names."""
+    if input_data.startswith('http'):
+        # Input is a Spotify playlist URL
+        playlist_id = input_data.split('/')[-1]
+        playlist = sp.playlist_tracks(playlist_id)
+        track_list = [track['track']['name'] for track in playlist['items']]
+    else:
+        # Input is a list of track names
+        track_list = input_data.split('\n')
     return track_list
 
-  else:
-    # The request failed, so raise an exception.
-    raise Exception("Failed to get track list: {}".format(response.status_code))
-
-# This function downloads a list of tracks to a given output directory.
+# This function downloads a list of tracks as MP3 files to a given output directory.
 def download_track_list(track_list, output_dir):
-  """Downloads a list of tracks to a given output directory."""
-  # Iterate over the tracks in the list.
-  for track in track_list:
-    # Get the track URI.
-    request = spotipy.client.TrackRequest(track)
-    uri = request.get()['uri']
+    """Downloads a list of tracks as MP3 files to a given output directory."""
+    os.makedirs(output_dir, exist_ok=True)
+    for track in track_list:
+        search_result = sp.search(q=track, type='track', limit=1)
+        if search_result['tracks']['items']:
+            track_id = search_result['tracks']['items'][0]['id']
+            track_info = sp.track(track_id)
+            track_name = track_info['name']
+            artists = ', '.join([artist['name'] for artist in track_info['artists']])
+            audio_features = sp.audio_features(track_id)[0]
+            preview_url = track_info['preview_url']
+            if preview_url:
+                mp3_file = os.path.join(output_dir, f'{track_name} - {artists}.mp3')
+                response = requests.get(preview_url)
+                with open(mp3_file, 'wb') as f:
+                    f.write(response.content)
+                print(f"Downloaded: {track_name} - {artists}")
+            else:
+                print(f"No preview available for: {track_name} - {artists}")
+        else:
+            print(f"Track not found: {track}")
 
-    # Download the track to the output directory.
-    spotipy.client.DownloadFile(uri, os.path.join(output_dir, track))
-
-# This function adds a list of tracks to a given playlist.
-def add_track_list_to_playlist(track_list, playlist_id):
-  """Adds a list of tracks to a given playlist."""
-  # Create a Spotify client.
-  client = spotipy.client.Spotify()
-
-  # Add the tracks to the playlist.
-  client.user_playlist_add_tracks(playlist_id, track_list)
-
-# This is the main function.
+# Main function
 if __name__ == '__main__':
-  # Get the track list from the user.
-  url = input("Enter the URL of the track list: ")
-  track_list = get_track_list(url)
+    input_data = input("Enter a list of track names or a Spotify playlist URL:\n")
+    output_dir = input("Enter the output directory for downloaded MP3 files:\n")
 
-  # Choose whether to download the tracks or add them to a playlist.
-  action = input("Would you like to download (d) or add to playlist (a): ")
-  if action == 'd':
-    # Get the output directory from the user.
-    output_dir = input("Enter the output directory: ")
+    track_list = get_track_list(input_data)
     download_track_list(track_list, output_dir)
-  elif action == 'a':
-    # Get the playlist ID from the user.
-    playlist_id = input("Enter the playlist ID: ")
-    add_track_list_to_playlist(track_list, playlist_id)
-  else:
-    print("Invalid action.")
